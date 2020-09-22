@@ -107,6 +107,37 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
     program
 }
 
+
+fn compile(instructions: &Vec<Instruction>) -> Vec<Box<dyn Fn(&mut Vec<u8>, &mut usize)>> {
+    let mut code: Vec<Box<dyn Fn(&mut Vec<u8>, &mut usize)>> = vec![];
+    // code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer += 1)); code }
+    for instr in instructions {
+        match instr {
+            Instruction::IncrementPointer => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer += 1)),
+            Instruction::DecrementPointer => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer -= 1)),
+            Instruction::Increment => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| tape[*data_pointer] += 1)),
+            Instruction::Decrement => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| tape[*data_pointer] -= 1)),
+            Instruction::Write => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| print!("{}", tape[*data_pointer] as char))),
+            Instruction::Read => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| {
+                let mut input: [u8; 1] = [0; 1];
+                std::io::stdin().read_exact(&mut input).expect("failed to read stdin");
+                tape[*data_pointer] = input[0];
+            })),
+            Instruction::Loop(nested_instructions) => {
+                let innercode = compile(&nested_instructions);
+                code.push(Box::new(move |tape: &mut Vec<u8>, data_pointer: &mut usize| {
+                    while tape[*data_pointer] != 0 {
+                        for insn in &innercode {
+                            insn(tape, data_pointer);
+                        }
+                    }
+                }));
+            },
+        }
+    }
+    return code;
+}
+
 /// Executes a program that was previously parsed
 fn run(instructions: &Vec<Instruction>, tape: &mut Vec<u8>, data_pointer: &mut usize) {
     for instr in instructions {
@@ -156,5 +187,9 @@ fn main() {
     let mut tape: Vec<u8> = vec![0; 1024];
     let mut data_pointer = 512;
 
-    run(&program, &mut tape, &mut data_pointer);
+    // run(&program, &mut tape, &mut data_pointer);
+    let code = compile(&program);
+    for insn in code {
+        insn(&mut tape, &mut data_pointer);
+    }
 }
