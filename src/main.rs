@@ -108,39 +108,63 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
     program
 }
 
-fn compile(instructions: &[Instruction]) -> Box<dyn '_ + Fn(&mut Vec<u8>, usize) -> usize> {
+fn compile(
+    instructions: &[Instruction],
+    delta_p: i32,
+) -> Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> {
     if instructions.is_empty() {
-        return Box::new(move |_tape, p| p);
+        return Box::new(move |_tape, p| p + delta_p);
     }
 
-    let rest: Box<dyn '_ + Fn(&mut Vec<u8>, usize) -> usize> = compile(&instructions[1..]);
     match &instructions[0] {
-        Instruction::IncrementPointer => Box::new(move |tape, p| rest(tape, p + 1)),
-        Instruction::DecrementPointer => Box::new(move |tape, p| rest(tape, p - 1)),
-        Instruction::Increment => Box::new(move |tape, p| {
-            tape[p] += 1;
-            rest(tape, p)
-        }),
-        Instruction::Decrement => Box::new(move |tape, p| {
-            tape[p] -= 1;
-            rest(tape, p)
-        }),
-        Instruction::Write => Box::new(move |tape, p| {
-            print!("{}", tape[p] as char);
-            rest(tape, p)
-        }),
-        Instruction::Read => Box::new(move |tape, p| {
-            let mut input: [u8; 1] = [0; 1];
-            std::io::stdin()
-                .read_exact(&mut input)
-                .expect("failed to read stdin");
-            tape[p] = input[0];
-            rest(tape, p)
-        }),
-        Instruction::Loop(nested_instructions) => {
-            let inner = compile(&nested_instructions);
+        Instruction::IncrementPointer => compile(&instructions[1..], delta_p + 1),
+        Instruction::DecrementPointer => compile(&instructions[1..], delta_p - 1),
+        Instruction::Increment => {
+            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+
             Box::new(move |tape, mut p| {
-                while tape[p] != 0 {
+                p += delta_p;
+                tape[p as usize] += 1;
+                rest(tape, p)
+            })
+        }
+        Instruction::Decrement => {
+            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+
+            Box::new(move |tape, mut p| {
+                p += delta_p;
+                tape[p as usize] -= 1;
+                rest(tape, p)
+            })
+        }
+        Instruction::Write => {
+            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+
+            Box::new(move |tape, mut p| {
+                p += delta_p;
+                print!("{}", tape[p as usize] as char);
+                rest(tape, p)
+            })
+        }
+        Instruction::Read => {
+            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+
+            Box::new(move |tape, mut p| {
+                let mut input: [u8; 1] = [0; 1];
+                std::io::stdin()
+                    .read_exact(&mut input)
+                    .expect("failed to read stdin");
+                p += delta_p;
+                tape[p as usize] = input[0];
+                rest(tape, p)
+            })
+        }
+        Instruction::Loop(nested_instructions) => {
+            let inner = compile(&nested_instructions, 0);
+            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+            Box::new(move |tape, mut p| {
+                p += delta_p;
+                while tape[p as usize] != 0 {
                     p = inner(tape, p);
                 }
                 rest(tape, p)
@@ -203,6 +227,6 @@ fn main() {
     let mut tape: Vec<u8> = vec![0; 1024];
     let data_pointer = 512;
     // run(&program, &mut tape, &mut data_pointer);
-    let code = compile(&program);
+    let code = compile(&program, 0);
     code(&mut tape, data_pointer);
 }
