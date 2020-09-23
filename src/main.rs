@@ -1,10 +1,9 @@
 use std::env;
-use std::io::Read;
 use std::fs::File;
+use std::io::Read;
 
 /// Opcodes determined by the lexer
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum OpCode {
     IncrementPointer,
     DecrementPointer,
@@ -16,8 +15,7 @@ enum OpCode {
     LoopEnd,
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum Instruction {
     IncrementPointer,
     DecrementPointer,
@@ -25,7 +23,7 @@ enum Instruction {
     Decrement,
     Write,
     Read,
-    Loop(Vec<Instruction>)
+    Loop(Vec<Instruction>),
 }
 
 /// Lexer turns the source code into a sequence of opcodes
@@ -42,13 +40,13 @@ fn lex(source: String) -> Vec<OpCode> {
             ',' => Some(OpCode::Read),
             '[' => Some(OpCode::LoopBegin),
             ']' => Some(OpCode::LoopEnd),
-            _ => None
+            _ => None,
         };
 
         // Non-opcode characters are simply comments
         match op {
             Some(op) => operations.push(op),
-            None => ()
+            None => (),
         }
     }
 
@@ -74,68 +72,88 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
                     loop_start = i;
                     loop_stack += 1;
                     None
-                },
+                }
 
                 OpCode::LoopEnd => panic!("loop ending at #{} has no beginning", i),
             };
 
             match instr {
                 Some(instr) => program.push(instr),
-                None => ()
+                None => (),
             }
         } else {
             match op {
                 OpCode::LoopBegin => {
                     loop_stack += 1;
-                },
+                }
                 OpCode::LoopEnd => {
                     loop_stack -= 1;
 
                     if loop_stack == 0 {
-                        program.push(Instruction::Loop(parse(opcodes[loop_start+1..i].to_vec())));
+                        program.push(Instruction::Loop(parse(
+                            opcodes[loop_start + 1..i].to_vec(),
+                        )));
                     }
-                },
+                }
                 _ => (),
             }
         }
     }
 
     if loop_stack != 0 {
-        panic!("loop that starts at #{} has no matching ending!", loop_start);
+        panic!(
+            "loop that starts at #{} has no matching ending!",
+            loop_start
+        );
     }
 
     program
 }
 
+fn compile(instructions: &[Instruction]) -> Box<dyn '_ + Fn(&mut Vec<u8>, &mut usize)> {
+    if instructions.len() == 0 {
+        return Box::new(move |_tape, _p| ());
+    }
 
-fn compile(instructions: &Vec<Instruction>) -> Vec<Box<dyn Fn(&mut Vec<u8>, &mut usize)>> {
-    let mut code: Vec<Box<dyn Fn(&mut Vec<u8>, &mut usize)>> = vec![];
-    // code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer += 1)); code }
-    for instr in instructions {
-        match instr {
-            Instruction::IncrementPointer => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer += 1)),
-            Instruction::DecrementPointer => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| *data_pointer -= 1)),
-            Instruction::Increment => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| tape[*data_pointer] += 1)),
-            Instruction::Decrement => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| tape[*data_pointer] -= 1)),
-            Instruction::Write => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| print!("{}", tape[*data_pointer] as char))),
-            Instruction::Read => code.push(Box::new(|tape: &mut Vec<u8>, data_pointer: &mut usize| {
-                let mut input: [u8; 1] = [0; 1];
-                std::io::stdin().read_exact(&mut input).expect("failed to read stdin");
-                tape[*data_pointer] = input[0];
-            })),
-            Instruction::Loop(nested_instructions) => {
-                let innercode = compile(&nested_instructions);
-                code.push(Box::new(move |tape: &mut Vec<u8>, data_pointer: &mut usize| {
-                    while tape[*data_pointer] != 0 {
-                        for insn in &innercode {
-                            insn(tape, data_pointer);
-                        }
-                    }
-                }));
-            },
+    let rest: Box<dyn '_ + Fn(&mut Vec<u8>, &mut usize)> = compile(&instructions[1..]);
+    match &instructions[0] {
+        Instruction::IncrementPointer => Box::new(move |tape, p| {
+            *p += 1;
+            rest(tape, p);
+        }),
+        Instruction::DecrementPointer => Box::new(move |tape, p| {
+            *p -= 1;
+            rest(tape, p);
+        }),
+        Instruction::Increment => Box::new(move |tape, p| {
+            tape[*p] += 1;
+            rest(tape, p);
+        }),
+        Instruction::Decrement => Box::new(move |tape, p| {
+            tape[*p] -= 1;
+            rest(tape, p);
+        }),
+        Instruction::Write => Box::new(move |tape, p| {
+            print!("{}", tape[*p] as char);
+            rest(tape, p);
+        }),
+        Instruction::Read => Box::new(move |tape, p| {
+            let mut input: [u8; 1] = [0; 1];
+            std::io::stdin()
+                .read_exact(&mut input)
+                .expect("failed to read stdin");
+            tape[*p] = input[0];
+        }),
+        Instruction::Loop(nested_instructions) => {
+            let inner = compile(&nested_instructions);
+            Box::new(move |tape, p| {
+                while tape[*p] != 0 {
+                    inner(tape, p);
+                }
+                rest(tape, p);
+            })
         }
     }
-    return code;
 }
 
 /// Executes a program that was previously parsed
@@ -149,9 +167,11 @@ fn run(instructions: &Vec<Instruction>, tape: &mut Vec<u8>, data_pointer: &mut u
             Instruction::Write => print!("{}", tape[*data_pointer] as char),
             Instruction::Read => {
                 let mut input: [u8; 1] = [0; 1];
-                std::io::stdin().read_exact(&mut input).expect("failed to read stdin");
+                std::io::stdin()
+                    .read_exact(&mut input)
+                    .expect("failed to read stdin");
                 tape[*data_pointer] = input[0];
-            },
+            }
             Instruction::Loop(nested_instructions) => {
                 while tape[*data_pointer] != 0 {
                     run(&nested_instructions, tape, data_pointer)
@@ -169,13 +189,14 @@ fn main() {
         println!("usage: bf <file.bf>");
         std::process::exit(1);
     }
-    
+
     let filename = &args[1];
 
     // Read file
     let mut file = File::open(filename).expect("program file not found");
     let mut source = String::new();
-    file.read_to_string(&mut source).expect("failed to read program file");
+    file.read_to_string(&mut source)
+        .expect("failed to read program file");
 
     // Lex file into opcodes
     let opcodes = lex(source);
@@ -189,7 +210,5 @@ fn main() {
 
     // run(&program, &mut tape, &mut data_pointer);
     let code = compile(&program);
-    for insn in code {
-        insn(&mut tape, &mut data_pointer);
-    }
+    code(&mut tape, &mut data_pointer);
 }
