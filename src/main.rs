@@ -44,9 +44,8 @@ fn lex(source: String) -> Vec<OpCode> {
         };
 
         // Non-opcode characters are simply comments
-        match op {
-            Some(op) => operations.push(op),
-            None => (),
+        if let Some(op) = op {
+            operations.push(op);
         }
     }
 
@@ -77,9 +76,8 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
                 OpCode::LoopEnd => panic!("loop ending at #{} has no beginning", i),
             };
 
-            match instr {
-                Some(instr) => program.push(instr),
-                None => (),
+            if let Some(instr) = instr {
+                program.push(instr);
             }
         } else {
             match op {
@@ -111,7 +109,7 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
 }
 
 fn compile(instructions: &[Instruction]) -> Box<dyn '_ + Fn(&mut Vec<u8>, &mut usize)> {
-    if instructions.len() == 0 {
+    if instructions.is_empty() {
         return Box::new(move |_tape, _p| ());
     }
 
@@ -157,7 +155,9 @@ fn compile(instructions: &[Instruction]) -> Box<dyn '_ + Fn(&mut Vec<u8>, &mut u
 }
 
 /// Executes a program that was previously parsed
-fn run(instructions: &Vec<Instruction>, tape: &mut Vec<u8>, data_pointer: &mut usize) {
+// This is the original code, keeping it here for now
+#[allow(dead_code)]
+fn run(instructions: &[Instruction], tape: &mut Vec<u8>, data_pointer: &mut usize) {
     for instr in instructions {
         match instr {
             Instruction::IncrementPointer => *data_pointer += 1,
