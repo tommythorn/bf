@@ -15,7 +15,7 @@ enum OpCode {
     LoopEnd,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Instruction {
     IncrementPointer,
     DecrementPointer,
@@ -120,7 +120,7 @@ fn compile(
         Instruction::IncrementPointer => compile(&instructions[1..], delta_p + 1),
         Instruction::DecrementPointer => compile(&instructions[1..], delta_p - 1),
         Instruction::Increment => {
-            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+            let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
                 p += delta_p;
@@ -129,7 +129,7 @@ fn compile(
             })
         }
         Instruction::Decrement => {
-            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+            let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
                 p += delta_p;
@@ -138,7 +138,7 @@ fn compile(
             })
         }
         Instruction::Write => {
-            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+            let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
                 p += delta_p;
@@ -147,7 +147,7 @@ fn compile(
             })
         }
         Instruction::Read => {
-            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
+            let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
                 let mut input: [u8; 1] = [0; 1];
@@ -159,9 +159,20 @@ fn compile(
                 rest(tape, p)
             })
         }
+
         Instruction::Loop(nested_instructions) => {
+            let rest = compile(&instructions[1..], 0);
+
+            if nested_instructions.len() == 1 && nested_instructions[0] == Instruction::Decrement {
+                // Special case [-] which sets take[p] to 0
+                return Box::new(move |tape, mut p| {
+                    p += delta_p;
+                    tape[p as usize] = 0;
+                    rest(tape, p)
+                });
+            }
+
             let inner = compile(&nested_instructions, 0);
-            let rest: Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> = compile(&instructions[1..], 0);
             Box::new(move |tape, mut p| {
                 p += delta_p;
                 while tape[p as usize] != 0 {
