@@ -108,6 +108,83 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
     program
 }
 
+/*
+ * The original instructions are at too-low level so to catch interesting patterns, we'll raise it a bit,
+ * rewriting the original stream into bigger instructions.
+ */
+
+#[derive(Debug, Clone, PartialEq)]
+enum BigInsn {
+    Move(i32),
+    Adj(i32),
+    Write,
+    Read,
+    Loop(Vec<BigInsn>),
+}
+
+fn emit(bigcode: &mut Vec<BigInsn>, deltap: &mut i32, delta: &mut i32) {
+    if *deltap != 0 {
+        bigcode.push(BigInsn::Move(*deltap));
+        *deltap = 0;
+    }
+
+    if *delta != 0 {
+        bigcode.push(BigInsn::Adj(*delta));
+        *delta = 0;
+    }
+}
+
+fn maybe_emit(bigcode: &mut Vec<BigInsn>, deltap: &mut i32, delta: &mut i32) {
+    if *delta != 0 {
+        emit(bigcode, deltap, delta);
+    }
+}
+
+/**
+This function translates ('<' | '>')+ ('+' | '-')+ into MoveAdj N M instructions.
+
+the lowlevel BF instructions into the higher-level BigInsn
+by abstractly simulating the movement of the < > and + -.
+*/
+fn raise_abstraction(instructions: &[Instruction]) -> Vec<BigInsn> {
+    let mut deltap: i32 = 0;
+    let mut delta: i32 = 0;
+    let mut bigcode = vec![];
+
+    for insn in instructions.iter() {
+        match &insn {
+            Instruction::IncrementPointer | Instruction::DecrementPointer => {
+                maybe_emit(&mut bigcode, &mut deltap, &mut delta);
+                if *insn == Instruction::IncrementPointer {
+                    deltap += 1;
+                } else {
+                    deltap -= 1;
+                }
+            }
+            Instruction::Increment => delta += 1,
+            Instruction::Decrement => delta -= 1,
+            Instruction::Write => {
+                emit(&mut bigcode, &mut deltap, &mut delta);
+                bigcode.push(BigInsn::Write);
+            }
+            Instruction::Read => {
+                emit(&mut bigcode, &mut deltap, &mut delta);
+                bigcode.push(BigInsn::Read);
+            }
+            Instruction::Loop(body) => {
+                emit(&mut bigcode, &mut deltap, &mut delta);
+                bigcode.push(BigInsn::Loop(raise_abstraction(body)));
+                assert_eq!(deltap, 0);
+                assert_eq!(delta, 0);
+            }
+        }
+    }
+
+    emit(&mut bigcode, &mut deltap, &mut delta);
+
+    bigcode
+}
+
 fn compile(
     instructions: &[Instruction],
     delta_p: i32,
@@ -238,6 +315,7 @@ fn main() {
     let mut tape: Vec<u8> = vec![0; 1024];
     let data_pointer = 512;
     // run(&program, &mut tape, &mut data_pointer);
+    println!("{:?}", raise_abstraction(&program));
     let code = compile(&program, 0);
     code(&mut tape, data_pointer);
 }
