@@ -1,3 +1,6 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::cast_sign_loss)]
+
 use std::env;
 use std::fs::File;
 use std::io::Read;
@@ -27,7 +30,7 @@ enum Instruction {
 }
 
 /// Lexer turns the source code into a sequence of opcodes
-fn lex(source: String) -> Vec<OpCode> {
+fn lex(source: &str) -> Vec<OpCode> {
     let mut operations = Vec::new();
 
     for symbol in source.chars() {
@@ -52,7 +55,7 @@ fn lex(source: String) -> Vec<OpCode> {
     operations
 }
 
-fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
+fn parse(opcodes: &[OpCode]) -> Vec<Instruction> {
     let mut program: Vec<Instruction> = Vec::new();
     let mut loop_stack = 0;
     let mut loop_start = 0;
@@ -88,9 +91,7 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
                     loop_stack -= 1;
 
                     if loop_stack == 0 {
-                        program.push(Instruction::Loop(parse(
-                            opcodes[loop_start + 1..i].to_vec(),
-                        )));
+                        program.push(Instruction::Loop(parse(&opcodes[loop_start + 1..i])));
                     }
                 }
                 _ => (),
@@ -115,14 +116,14 @@ fn parse(opcodes: Vec<OpCode>) -> Vec<Instruction> {
 
 #[derive(Debug, Clone, PartialEq)]
 enum BigInsn {
-    Move(i32),
-    Adj(i32),
+    Move(isize),
+    Adj(isize),
     Write,
     Read,
     Loop(Vec<BigInsn>),
 }
 
-fn emit(bigcode: &mut Vec<BigInsn>, deltap: &mut i32, delta: &mut i32) {
+fn emit(bigcode: &mut Vec<BigInsn>, deltap: &mut isize, delta: &mut isize) {
     if *deltap != 0 {
         bigcode.push(BigInsn::Move(*deltap));
         *deltap = 0;
@@ -134,21 +135,21 @@ fn emit(bigcode: &mut Vec<BigInsn>, deltap: &mut i32, delta: &mut i32) {
     }
 }
 
-fn maybe_emit(bigcode: &mut Vec<BigInsn>, deltap: &mut i32, delta: &mut i32) {
+fn maybe_emit(bigcode: &mut Vec<BigInsn>, deltap: &mut isize, delta: &mut isize) {
     if *delta != 0 {
         emit(bigcode, deltap, delta);
     }
 }
 
 /**
-This function translates ('<' | '>')+ ('+' | '-')+ into MoveAdj N M instructions.
+This function translates ('<' | '>')+ ('+' | '-')+ into `MoveAdj` N M instructions.
 
-the lowlevel BF instructions into the higher-level BigInsn
+the lowlevel BF instructions into the higher-level `BigInsn`
 by abstractly simulating the movement of the < > and + -.
 */
 fn raise_abstraction(instructions: &[Instruction]) -> Vec<BigInsn> {
-    let mut deltap: i32 = 0;
-    let mut delta: i32 = 0;
+    let mut deltap: isize = 0;
+    let mut delta: isize = 0;
     let mut bigcode = vec![];
 
     for insn in instructions.iter() {
@@ -185,12 +186,21 @@ fn raise_abstraction(instructions: &[Instruction]) -> Vec<BigInsn> {
     bigcode
 }
 
+/// Array indicies needs to be of type usize but sometimes we want to use
+/// signed deltas.  Rust doesn't seem to have idiomatic way to handling this, sigh,
+/// so we abstract this into a function.  Now we _could_ trap underflow,
+/// but as wrap-around will end of getting caught by the array dereference, we
+/// don't have to check it explicitly.
+fn offset(p: usize, delta: isize) -> usize {
+    p + delta as usize
+}
+
 fn compile(
     instructions: &[Instruction],
-    delta_p: i32,
-) -> Box<dyn '_ + Fn(&mut Vec<u8>, i32) -> i32> {
+    delta_p: isize,
+) -> Box<dyn '_ + Fn(&mut Vec<u8>, usize) -> usize> {
     if instructions.is_empty() {
-        return Box::new(move |_tape, p| p + delta_p);
+        return Box::new(move |_tape, p| offset(p, delta_p));
     }
 
     match &instructions[0] {
@@ -200,8 +210,8 @@ fn compile(
             let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
-                p += delta_p;
-                tape[p as usize] += 1;
+                p = offset(p, delta_p);
+                tape[p] += 1;
                 rest(tape, p)
             })
         }
@@ -209,8 +219,8 @@ fn compile(
             let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
-                p += delta_p;
-                tape[p as usize] -= 1;
+                p = offset(p, delta_p);
+                tape[p] -= 1;
                 rest(tape, p)
             })
         }
@@ -218,8 +228,8 @@ fn compile(
             let rest = compile(&instructions[1..], 0);
 
             Box::new(move |tape, mut p| {
-                p += delta_p;
-                print!("{}", tape[p as usize] as char);
+                p = offset(p, delta_p);
+                print!("{}", tape[p] as char);
                 rest(tape, p)
             })
         }
@@ -231,8 +241,8 @@ fn compile(
                 std::io::stdin()
                     .read_exact(&mut input)
                     .expect("failed to read stdin");
-                p += delta_p;
-                tape[p as usize] = input[0];
+                p = offset(p, delta_p);
+                tape[p] = input[0];
                 rest(tape, p)
             })
         }
@@ -243,16 +253,16 @@ fn compile(
             if nested_instructions.len() == 1 && nested_instructions[0] == Instruction::Decrement {
                 // Special case [-] which sets take[p] to 0
                 return Box::new(move |tape, mut p| {
-                    p += delta_p;
-                    tape[p as usize] = 0;
+                    p = offset(p, delta_p);
+                    tape[p] = 0;
                     rest(tape, p)
                 });
             }
 
             let inner = compile(&nested_instructions, 0);
             Box::new(move |tape, mut p| {
-                p += delta_p;
-                while tape[p as usize] != 0 {
+                p = offset(p, delta_p);
+                while tape[p] != 0 {
                     p = inner(tape, p);
                 }
                 rest(tape, p)
@@ -306,10 +316,10 @@ fn main() {
         .expect("failed to read program file");
 
     // Lex file into opcodes
-    let opcodes = lex(source);
+    let opcodes = lex(&source[..]);
 
     // Parse opcodes into program
-    let program = parse(opcodes);
+    let program = parse(&opcodes[..]);
 
     // Set up environment and run program
     let mut tape: Vec<u8> = vec![0; 1024];
